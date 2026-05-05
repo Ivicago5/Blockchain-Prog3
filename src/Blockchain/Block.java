@@ -1,45 +1,82 @@
 package Blockchain;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.util.Date;
+import Transaction.Transaction;
+
+import Util.Crypto;
 import Util.Logger;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
 public class Block {
-    String data;
-     int index;
-    long timestamp;
-    String previousHash;
-    String hash;
 
+    private final int index;
+    private final long timestamp;
+    private final String previousHash;
+    private String hash;
+    private int nonce;
+    private final List<Transaction> transactions;
 
-    public Block(int index, String data, String previousHash) {
+    public Block(int index,List<Transaction> transactions , String previousHash) {
         this.index = index;
-        this.data = data;
         this.previousHash = previousHash;
-        this.timestamp = new Date().getTime();
+        this.timestamp = System.currentTimeMillis();
+
+        if (transactions == null){
+            this.transactions = new ArrayList<>();  // no null values. Empty is full fine
+        } else {
+            this.transactions = new ArrayList<>(transactions);
+        }
+
+        this.nonce = 0;
         this.hash = calculateHash();
     }
 
-    private String calculateHash() {
-        String content_of_Block = index + data + timestamp + previousHash;
-        return SHA256Hash(content_of_Block);
-    }
-    //making this a separate method, because I will probably need it later! JUST A GUESS
-    public static String SHA256Hash(String input) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
-            StringBuilder sb = new StringBuilder();
-            for (byte B : hash){
-                String hexadecimal = Integer.toHexString(0xff & B);
-                if (hexadecimal.length() == 1) sb.append('0');
-                sb.append(hexadecimal);
-            }
-            return sb.toString();
-        } catch (Exception e) {
-            Logger.error(e.getMessage());
-            throw new RuntimeException(e);
+    public String calculateHash() {
+        StringBuilder transactionData = new StringBuilder();
+        for (Transaction tx : transactions){
+            transactionData.append(tx.getTxId());
         }
+
+        String content_of_Block = index + transactionData.toString() + timestamp + previousHash + nonce;
+        return Crypto.SHA256Hash(content_of_Block);
+
+    }
+
+    public void mineBlock(int difficulty) {
+        String target = "0".repeat(difficulty);
+
+        while (!calculateHash().substring(0, difficulty).equals(target)) {
+            nonce++;
+        }
+
+        hash = calculateHash();
+        Logger.info("Block #" + index + " mined! Nonce: " + nonce + " Hash: " + hash);
+
+    }
+
+    public List<Transaction> getTransactions() {
+        return new ArrayList<>(transactions);
+    }
+
+    public int getNonce() {
+        return nonce;
+    }
+
+    public long getTimestamp() {
+        return timestamp;
+    }
+
+    public int getIndex() {
+        return index;
+    }
+
+    public String getPreviousHash() {
+        return previousHash;
+    }
+
+    public String getHash() {
+        return hash;
     }
 }

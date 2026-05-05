@@ -1,4 +1,91 @@
 package Transaction;
 
+import Util.Crypto;
+
+import java.security.PrivateKey;
+import java.util.ArrayList;
+import java.util.List;
+
 public class Transaction {
+
+    private final String txId;
+    private final int amount;
+    private final String senderPublicKey;
+    private final String receiverPublicKey;
+
+    private final List<TransactionInput> inputs;
+    private final List<UTXO> outputs;
+
+
+    private String signature;
+
+
+    public Transaction(String senderPublicKey, String receiverPublicKey, int amount, List <TransactionInput> inputs) {
+        this.amount = amount;
+        this.senderPublicKey = senderPublicKey;
+        this.receiverPublicKey = receiverPublicKey;
+        this.txId = Crypto.SHA256Hash(getRawData());  // id without the signature
+        this.inputs = inputs;
+        this.outputs = new ArrayList<>();
+    }
+
+    private String getRawData() {
+        return senderPublicKey + receiverPublicKey + amount;
+    }
+
+    public void sign(PrivateKey senderPrivateKey){
+        this.signature = Crypto.signECDSA(senderPrivateKey, txId);
+    }
+
+    public boolean isSignatureValid() {
+        if (signature == null || signature.isEmpty()) return false;
+        return Crypto.verifyECDSA(senderPublicKey, txId, signature);
+    }
+
+    public int getAmount() {
+        return amount;
+    }
+
+    public String getSenderPubKey() {
+        return senderPublicKey;
+    }
+
+    public String getReceiverPubKey() {
+        return receiverPublicKey;
+    }
+
+    public String getSignature() {
+        return signature;
+    }
+
+    public String getTxId() {
+        return txId;
+    }
+
+    public List<TransactionInput> getInputs() {
+        return inputs;
+    }
+
+    // asked an LLM to make debugging prettier so its more readable because Base64 was too long, this is what I got :)
+    public String toDebugString() {
+        return "TX[" +
+                "from=" + shortKey(senderPublicKey) +
+                ", to=" + shortKey(receiverPublicKey) +
+                ", amount=" + amount +
+                ", signed=" + (signature != null) +
+                "]";
+    }
+
+    private String shortKey (String key) {
+        return key == null ? "null" : key.substring(0, 12) + "...";
+    }
+
+    @Override
+    public String toString() {
+        return "Sender: " + senderPublicKey + ", Receiver: " + receiverPublicKey + ", Amount sent: " + amount + ", Transaction id: " + txId + ", Signature: " + (signature == null ? "" : signature) + " \n ";
+    }
+
+
 }
+
+
