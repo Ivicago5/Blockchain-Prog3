@@ -7,6 +7,7 @@ import Util.Logger;
 
 
 import java.util.*;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 
 public class Blockchain {
@@ -14,7 +15,7 @@ public class Blockchain {
     private final int difficulty = 6;
     private final List<Transaction> pendingTransactions;
     private final UTXOPool utxoPool;
-
+    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
     public Blockchain(String genesisPublicKey) {
         chain = new ArrayList<>();
@@ -65,40 +66,47 @@ public class Blockchain {
     }
 
     public void minePendingTransactions(){
-        if (pendingTransactions.isEmpty()){
-            Logger.warn("No transactions to mine");
-            return;
-        }
+        lock.writeLock().lock();
 
-        Block prevBlock = getLatestBlock();
-
-
-        List<Transaction> validTransactions = new ArrayList<>();
-
-        for (Transaction tx : pendingTransactions) {
-            if (validateTransaction(tx)) {
-                applyTransaction(tx);
-                validTransactions.add(tx);
-            } else {
-                Logger.warn("Transaction Rejected!");
+        try {
+            if (pendingTransactions.isEmpty()) {
+                Logger.warn("No transactions to mine");
+                return;
             }
+
+            List<Transaction> validTransactions = new ArrayList<>();
+
+            for (Transaction tx : pendingTransactions) {
+                if (validateTransaction(tx)) {
+                    applyTransaction(tx);
+                    validTransactions.add(tx);
+                } else {
+                    Logger.warn("Transaction Rejected!");
+                }
+            }
+
+            if (validTransactions.isEmpty()) {
+                Logger.warn("No valid transactions to mine");
+                return;
+            }
+
+            Block prevBlock = getLatestBlock();
+
+            Block newBlock = new Block(
+                    chain.size(),
+                    validTransactions,
+                    prevBlock.getHash()
+            );
+
+            newBlock.mineBlock(difficulty);
+            chain.add(newBlock);
+
+            pendingTransactions.clear();
+
+        } finally {
+            lock.writeLock().unlock();
         }
 
-        if (validTransactions.isEmpty()) {
-            Logger.warn("No valid transactions to mine");
-            return;
-        }
-
-        Block newBlock = new Block(
-                chain.size(),
-                validTransactions,
-                prevBlock.getHash()
-        );
-
-        newBlock.mineBlock(difficulty);
-        chain.add(newBlock);
-
-        pendingTransactions.clear();
     }
 
     public boolean isValid() {

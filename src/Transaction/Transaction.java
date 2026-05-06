@@ -54,10 +54,6 @@ public class Transaction {
         return receiverPublicKey;
     }
 
-    public String getSignature() {
-        return signature;
-    }
-
     public String getTxId() {
         return txId;
     }
@@ -76,8 +72,16 @@ public class Transaction {
                 "]";
     }
 
-    private String shortKey (String key) {
-        return key == null ? "null" : key.substring(0, 12) + "...";
+    private String shortKey(String key) {
+        if (key == null) return "null";
+
+        int maxLen = 12;
+
+        if (key.length() <= maxLen) {
+            return key;
+        }
+
+        return key.substring(0, maxLen) + "...";
     }
 
     @Override

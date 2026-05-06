@@ -6,28 +6,53 @@ import java.util.ArrayList;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.Collection;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class UTXOPool {
     private final Map<String, UTXO> utxos;
+    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
     public UTXOPool() {
         this.utxos = new HashMap<>();
     }
 
     public UTXO getUTXO (String id) {
-        return utxos.get(id);
+        lock.readLock().lock();
+        try {
+            return utxos.get(id);
+        } finally {
+            lock.readLock().unlock();
+        }
     }
 
     public void addUTXO (UTXO utxo){
-        utxos.put(utxo.getId(), utxo);
+        lock.writeLock().lock();
+        try {
+            utxos.put(utxo.getId(), utxo);
+        } finally {
+            lock.writeLock().unlock();
+        }
+
     }
 
     public void removeUTXO (String id) {
-        utxos.remove(id);
+        lock.writeLock().lock();
+        try {
+            utxos.remove(id);
+        } finally {
+            lock.writeLock().unlock();
+        }
+
     }
 
     public Collection<UTXO> getAllUTXOs() {
-        return new ArrayList<>(utxos.values());
+        lock.readLock().lock();
+        try {
+            return new ArrayList<>(utxos.values());
+        } finally {
+            lock.readLock().unlock();
+        }
+
     }
 
     public int getBalance (String publickKey) {
