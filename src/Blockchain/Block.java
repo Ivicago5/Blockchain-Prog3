@@ -6,7 +6,6 @@ import Util.Crypto;
 import Util.Logger;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 public class Block {
@@ -18,10 +17,14 @@ public class Block {
     private int nonce;
     private final List<Transaction> transactions;
 
-    public Block(int index,List<Transaction> transactions , String previousHash) {
+    public Block(int index, List<Transaction> transactions , String previousHash) {
+        this(index, transactions, previousHash, System.currentTimeMillis());
+    }
+
+    public Block(int index, List<Transaction> transactions , String previousHash, long timestamp) {
         this.index = index;
         this.previousHash = previousHash;
-        this.timestamp = System.currentTimeMillis();
+        this.timestamp = timestamp;
 
         if (transactions == null){
             this.transactions = new ArrayList<>();  // no null values. Empty is full fine

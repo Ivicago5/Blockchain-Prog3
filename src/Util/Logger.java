@@ -17,7 +17,7 @@ public class Logger {
         Error,
         Info
     };
-    private static void log(String message, logLevel level){
+    private static synchronized void log(String message, logLevel level){
         String date = dataFormat.format(System.currentTimeMillis());
         String name = Thread.currentThread().getName();
         String messagePrefix = "[" + date + "][" + name + "] " + level + " : ";

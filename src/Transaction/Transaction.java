@@ -1,5 +1,6 @@
 package Transaction;
 
+import Blockchain.GenesisConfig;
 import Util.Crypto;
 
 import java.security.PrivateKey;
@@ -24,21 +25,38 @@ public class Transaction {
         this.amount = amount;
         this.senderPublicKey = senderPublicKey;
         this.receiverPublicKey = receiverPublicKey;
-        this.txId = Crypto.SHA256Hash(getRawData());  // id without the signature
-        this.inputs = inputs;
+        if (inputs == null){
+            this.inputs = new ArrayList<>();
+        } else {
+            this.inputs = new ArrayList<>(inputs);
+        }
         this.outputs = new ArrayList<>();
+        this.txId = Crypto.SHA256Hash(getRawData());  // id without the signature
     }
 
     private String getRawData() {
-        return senderPublicKey + receiverPublicKey + amount;
+        StringBuilder inputData = new StringBuilder();
+
+        for (TransactionInput input : inputs) {
+            inputData.append(input.getUtxoId()).append("|");
+        }
+        return senderPublicKey + "|" + receiverPublicKey + "|" + amount + "|" + inputData;
     }
 
     public void sign(PrivateKey senderPrivateKey){
+        if (signature != null){
+            throw new IllegalStateException("Transaction is already signed");
+        }
         this.signature = Crypto.signECDSA(senderPrivateKey, txId);
     }
 
     public boolean isSignatureValid() {
+        if (isSystemTransaction()) {
+            return true;
+        }
+
         if (signature == null || signature.isEmpty()) return false;
+
         return Crypto.verifyECDSA(senderPublicKey, txId, signature);
     }
 
@@ -59,7 +77,11 @@ public class Transaction {
     }
 
     public List<TransactionInput> getInputs() {
-        return inputs;
+        return new ArrayList<>(inputs);
+    }
+
+    public boolean isSystemTransaction() {
+        return GenesisConfig.SYSTEM_SENDER.equals(senderPublicKey);
     }
 
     // asked an LLM to make debugging prettier so its more readable because Base64 was too long, this is what I got :)

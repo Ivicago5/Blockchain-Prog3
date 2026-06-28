@@ -5,6 +5,7 @@ import java.security.*;
 import java.security.spec.ECGenParameterSpec;
 import java.security.spec.EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
+import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.Base64;
 
 public class Crypto {
@@ -81,6 +82,22 @@ public class Crypto {
             EncodedKeySpec publicKeySpec = new X509EncodedKeySpec(decoded);
             KeyFactory keyFactory = KeyFactory.getInstance("EC");
             return keyFactory.generatePublic(publicKeySpec);
+        } catch (Exception e) {
+            Logger.error(e.getMessage());
+            throw new RuntimeException(e);
+        }
+    }
+
+    public static String privateKeyToBase64 (PrivateKey privateKey){
+        return Base64.getEncoder().encodeToString(privateKey.getEncoded());
+    }
+
+    public static PrivateKey privateKeyFromBase64(String base64PrivateKey){
+        try {
+            byte[] decoded = Base64.getDecoder().decode(base64PrivateKey);
+            PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(decoded);
+            KeyFactory keyFactory = KeyFactory.getInstance("EC");
+            return keyFactory.generatePrivate(keySpec);
         } catch (Exception e) {
             Logger.error(e.getMessage());
             throw new RuntimeException(e);

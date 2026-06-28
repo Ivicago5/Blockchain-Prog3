@@ -5,6 +5,7 @@ public class UTXO {
     private final String owner;
     private final String parentTxId;
     private final int amount;
+    private boolean spent;
 
     public UTXO(String id, String owner, int amount, String parentTxId){
         this.id = id;
@@ -25,10 +26,31 @@ public class UTXO {
         return owner;
     }
 
+    public UTXO copy() {
+        return new UTXO(
+                this.id,
+                this.owner,
+                this.amount,
+                this.parentTxId
+        );
+    }
+
+    private String shortKey(String key) {
+        if (key == null) return "null";
+
+        int maxLen = 12;
+
+        if (key.length() <= maxLen) {
+            return key;
+        }
+
+        return key.substring(0, maxLen) + "...";
+    }
+
     @Override
     public String toString() {
         return "UTXO[" +
-                "owner=" + owner.substring(0, 12) + "..." +
+                "owner=" + shortKey(owner) +
                 ", amount=" + amount +
                 "]";
     }

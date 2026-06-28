@@ -45,6 +45,8 @@ public class UTXOPool {
 
     }
 
+
+
     public Collection<UTXO> getAllUTXOs() {
         lock.readLock().lock();
         try {
@@ -56,23 +58,67 @@ public class UTXOPool {
     }
 
     public int getBalance (String publickKey) {
-        int balance = 0;
+        lock.readLock().lock();
+        try{
+            int balance = 0;
 
-        for (UTXO utxo : utxos.values()) {
-            if (utxo.getOwner().equals(publickKey)) {
-                balance += utxo.getAmount();
+            for (UTXO utxo : utxos.values()) {
+                if (utxo.getOwner().equals(publickKey)) {
+                    balance += utxo.getAmount();
+                }
             }
+            return balance;
+        } finally {
+            lock.readLock().unlock();
         }
-
-        return balance;
     }
 
     public boolean contains (String id) {
-        return utxos.containsKey(id);
+        lock.readLock().lock();
+        try{
+            return utxos.containsKey(id);
+        } finally {
+            lock.readLock().unlock();
+        }
+
+    }
+
+    public UTXOPool copy() {
+        lock.readLock().lock();
+        try {
+            UTXOPool copy = new UTXOPool();
+
+            for (UTXO utxo : utxos.values()) {
+                copy.addUTXO(utxo.copy());
+            }
+
+            return copy;
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    public void replaceWith(UTXOPool other) {
+        lock.writeLock().lock();
+        try {
+            this.utxos.clear();
+
+            for (UTXO utxo : other.getAllUTXOs()) {
+                this.utxos.put(utxo.getId(), utxo.copy());
+            }
+        } finally {
+            lock.writeLock().unlock();
+        }
     }
 
     public void clear() {
-        utxos.clear();
+        lock.writeLock().lock();
+        try {
+            utxos.clear();
+        } finally {
+            lock.writeLock().unlock();
+        }
+
     }
 
 }

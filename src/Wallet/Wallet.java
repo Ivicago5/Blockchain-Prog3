@@ -24,6 +24,11 @@ public class Wallet {
         this.publicKey = kp.getPublic();
     }
 
+    public Wallet(String publicKeyBase64, String privateKeyBase64){
+        this.publicKey = Crypto.publicKeyFromBase64(publicKeyBase64);
+        this.privateKey = Crypto.privateKeyFromBase64(privateKeyBase64);
+    }
+
     public PrivateKey getPrivateKey() {
         return privateKey;
     }
@@ -42,16 +47,24 @@ public class Wallet {
 
     public Transaction createTransaction(String receiver, int amount, Blockchain blockchain){
 
+        if (receiver == null || receiver.isEmpty()) {
+            Logger.error("Wallet: receiver can not be null or empty!");
+            return null;
+        }
+
+        if (amount <= 0) {
+            Logger.error("Wallet: amount must be positive!");
+            return null;
+        }
+
         List<UTXO> ownedUTXOs = new ArrayList<>();
         int total = 0;
 
-        for (UTXO utxo : blockchain.getUtxoPool().getAllUTXOs()){
-            if (utxo.getOwner().equals(getPublicKeyBase64())){
-                ownedUTXOs.add(utxo);
-                total+=utxo.getAmount();
+        for (UTXO utxo : blockchain.getUnspentOutputs(getPublicKeyBase64())) {
+            ownedUTXOs.add(utxo);
+            total += utxo.getAmount();
 
-                if (total >= amount) break;
-            }
+            if (total >= amount) break;
         }
 
         if (total < amount){
@@ -60,6 +73,7 @@ public class Wallet {
         }
 
         List<TransactionInput> inputs = new ArrayList<>();
+
         for (UTXO utxo : ownedUTXOs){
             inputs.add(new TransactionInput(utxo.getId()));
         }
