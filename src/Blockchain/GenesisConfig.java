@@ -11,7 +11,7 @@ public class GenesisConfig {
 
     public static final int GENESIS_AMOUNT = Integer.parseInt(System.getenv().getOrDefault("GENESIS_AMOUNT", "1000"));
 
-    public static final String FAUCET_PUBLIC_KEY_BASE64 = System.getenv("FAUCET_PUBLIC_KEY_BASE64");
+    public static final String FAUCET_PUBLIC_KEY_BASE64 = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE56STsl5n4MU1fxMyPxhOcqD2fh28pYFv9Vb+3BMrfbxuaG8ytffiflmBv/KMu4OnXQo0eEEmOYH6w4aXmBoVmg=="; //System.getenv("FAUCET_PUBLIC_KEY_BASE64");
 
     private GenesisConfig() {
         // to prevent instantiating, but use it only with static constants

@@ -1,6 +1,7 @@
 
 import Blockchain.Blockchain;
 import Transaction.Transaction;
+import Transaction.TransactionInput;
 import Blockchain.GenesisConfig;
 import Util.Logger;
 import Wallet.Wallet;
@@ -72,6 +73,25 @@ public class Main {
         // debug print
         //bc.printChain();
 
+        String json = tx1.toJson();
+
+        System.out.println(json);
+
+
+        Transaction copy = Transaction.fromJson(json);
+
+
+        System.out.println(copy.toDebugString());
+
+        System.out.println(
+                copy.isSignatureValid()
+        );
+
+        System.out.println(
+                tx1.getTxId().equals(copy.getTxId())
+        );
+
         Logger.warn("Checking if blockchain is valid.   Answer " + bc.isValid());
+
     }
 }

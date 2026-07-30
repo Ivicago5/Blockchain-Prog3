@@ -1,8 +1,11 @@
 package Network;
 
 import Blockchain.Blockchain;
+import Util.JsonUtil;
 import Util.Logger;
 import Wallet.Wallet;
+import Transaction.Transaction;
+import Blockchain.GenesisConfig;
 
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpExchange;
@@ -24,6 +27,9 @@ public class Node {
     private final String nodeAddress;
     private final String bootstrapNode;
     private final boolean isBootstrap;
+    private final Set<String> seenTransactions;
+    private final Set<String> seenBlocks;
+    private final Set<String> faucetClaims;
 
     private final Set<String> peers;
     private final HttpClient httpClient;
@@ -39,6 +45,10 @@ public class Node {
         this.nodeAddress = nodeAddress;
         this.bootstrapNode = bootstrapNode;
         this.isBootstrap = isBootstrap;
+
+        this.seenTransactions = Collections.synchronizedSet(new LinkedHashSet<>());
+        this.seenBlocks = Collections.synchronizedSet(new LinkedHashSet<>());
+        this.faucetClaims = Collections.synchronizedSet(new HashSet<>());
 
         this.peers = Collections.synchronizedSet(new LinkedHashSet<>());
         this.httpClient = HttpClient.newHttpClient();
@@ -56,6 +66,11 @@ public class Node {
             server.createContext("/peers", this::handlePeers);
             server.createContext("/peers/request", this::handlePeerRequest);
             server.createContext("/peers/response", this::handlePeerResponse);
+            server.createContext("/wallet", this::handleWallet);
+            server.createContext("/wallet/send", this::handleWalletSend);
+            server.createContext("/faucet", this::handleFaucet);
+            server.createContext("/transaction", this::handleTransaction);
+            //server.createContext("/block", this::handleBlock);
 
             server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
             server.start();
@@ -76,11 +91,80 @@ public class Node {
         }
     }
 
+    private void handleFaucet(HttpExchange exchange) throws IOException {
+
+        if (!exchange.getRequestMethod().equalsIgnoreCase("POST")) {
+            sendJson(exchange,405,
+                    "{\"error\":\"Method not allowed\"}");
+            return;
+        }
+
+
+        String body = readRequestBody(exchange);
+
+
+        String receiver =
+                JsonUtil.extractString(body,"receiver");
+
+
+        if(receiver == null || receiver.isEmpty()) {
+
+            sendJson(exchange,400,
+                    "{\"error\":\"Missing receiver\"}");
+
+            return;
+        }
+
+
+        if(!faucetClaims.add(receiver)) {
+
+            sendJson(exchange,400,
+                    "{\"error\":\"Wallet already claimed faucet\"}");
+
+            return;
+        }
+
+
+        Transaction faucetTx =
+                new Transaction(
+                        "FAUCET",
+                        GenesisConfig.SYSTEM_SENDER,
+                        receiver,
+                        100,
+                        new ArrayList<>()
+                );
+
+
+        if(!blockchain.addTransaction(faucetTx)) {
+
+            faucetClaims.remove(receiver);
+
+            sendJson(exchange,400,
+                    "{\"error\":\"Faucet transaction rejected\"}");
+
+            return;
+        }
+
+
+        seenTransactions.add(faucetTx.getTxId());
+
+        broadcastTransaction(faucetTx);
+
+
+        sendJson(exchange,200,
+                "{"
+                        +"\"status\":\"Faucet coins created\","
+                        +"\"txId\":\""
+                        +JsonUtil.escape(faucetTx.getTxId())
+                        +"\""
+                        +"}");
+    }
+
     private void registerWithBootstrap() {
         String json = "{"
                 + "\"type\":\"PEER_DISCOVERY_REQUEST\","
-                + "\"nodeId\":\"" + escape(nodeId) + "\","
-                + "\"address\":\"" + escape(nodeAddress) + "\""
+                + "\"nodeId\":\"" + JsonUtil.escape(nodeId) + "\","
+                + "\"address\":\"" + JsonUtil.escape(nodeAddress) + "\""
                 + "}";
 
         /*
@@ -105,7 +189,7 @@ public class Node {
 
                     addPeer(bootstrapNode);
 
-                    for (String peer : extractJsonArrayStrings(response.body(), "peers")) {
+                    for (String peer : JsonUtil.extractStringArray(response.body(), "peers")) {
                         addPeer(peer);
                     }
 
@@ -140,55 +224,6 @@ public class Node {
         }
     }
 
-    private List<String> extractJsonArrayStrings(String json, String key) {
-        List<String> result = new ArrayList<>();
-
-        if (json == null || key == null) {
-            return result;
-        }
-
-        String pattern = "\"" + key + "\"";
-        int keyIndex = json.indexOf(pattern);
-
-        if (keyIndex == -1) {
-            return result;
-        }
-
-        int arrayStart = json.indexOf("[", keyIndex);
-        int arrayEnd = json.indexOf("]", arrayStart);
-
-        if (arrayStart == -1 || arrayEnd == -1) {
-            return result;
-        }
-
-        String arrayContent = json.substring(arrayStart + 1, arrayEnd).trim();
-
-        if (arrayContent.isEmpty()) {
-            return result;
-        }
-
-        String[] parts = arrayContent.split(",");
-
-        for (String part : parts) {
-            String cleaned = part.trim();
-
-            if (cleaned.startsWith("\"")) {
-                cleaned = cleaned.substring(1);
-            }
-
-            if (cleaned.endsWith("\"")) {
-                cleaned = cleaned.substring(0, cleaned.length() - 1);
-            }
-
-            cleaned = cleaned.trim();
-
-            if (!cleaned.isEmpty()) {
-                result.add(cleaned);
-            }
-        }
-
-        return result;
-    }
 
     private void addPeer(String peerAddress) {
         if (peerAddress == null || peerAddress.isEmpty()) {
@@ -209,7 +244,7 @@ public class Node {
         }
 
         String body = readRequestBody(exchange);
-        String newAddress = extractJsonString(body, "address");
+        String newAddress = JsonUtil.extractString(body, "address");
 
         if (newAddress == null || newAddress.isEmpty()) {
             sendJson(exchange, 400, "{\"error\":\"Missing peer address\"}");
@@ -236,8 +271,8 @@ public class Node {
 
         String body = readRequestBody(exchange);
 
-        String newNodeId = extractJsonString(body, "nodeId");
-        String newAddress = extractJsonString(body, "address");
+        String newNodeId = JsonUtil.extractString(body, "nodeId");
+        String newAddress = JsonUtil.extractString(body, "address");
 
         if (newAddress == null || newAddress.isEmpty()) {
             sendJson(exchange, 400, "{\"error\":\"Missing peer address\"}");
@@ -261,45 +296,13 @@ public class Node {
          */
         String response = "{"
                 + "\"type\":\"PEER_DISCOVERY_RESPONSE\","
-                + "\"bootstrap\":\"" + escape(nodeAddress) + "\","
+                + "\"bootstrap\":\"" + JsonUtil.escape(nodeAddress) + "\","
                 + "\"peers\":" + discoveryPeersFor(newAddress)
                 + "}";
 
         sendJson(exchange, 200, response);
     }
 
-    private String extractJsonString(String json, String key) {
-        if (json == null || key == null) {
-            return null;
-        }
-
-        String pattern = "\"" + key + "\"";
-        int keyIndex = json.indexOf(pattern);
-
-        if (keyIndex == -1) {
-            return null;
-        }
-
-        int colonIndex = json.indexOf(":", keyIndex);
-
-        if (colonIndex == -1) {
-            return null;
-        }
-
-        int firstQuote = json.indexOf("\"", colonIndex + 1);
-
-        if (firstQuote == -1) {
-            return null;
-        }
-
-        int secondQuote = json.indexOf("\"", firstQuote + 1);
-
-        if (secondQuote == -1) {
-            return null;
-        }
-
-        return json.substring(firstQuote + 1, secondQuote);
-    }
 
     private String readRequestBody(HttpExchange exchange) throws IOException {
         return new String(
@@ -318,7 +321,7 @@ public class Node {
          * Always include bootstrap node address.
          */
         if (!nodeAddress.equals(requestingAddress)) {
-            sb.append("\"").append(escape(nodeAddress)).append("\"");
+            sb.append("\"").append(JsonUtil.escape(nodeAddress)).append("\"");
             first = false;
         }
 
@@ -332,7 +335,7 @@ public class Node {
                     sb.append(",");
                 }
 
-                sb.append("\"").append(escape(peer)).append("\"");
+                sb.append("\"").append(JsonUtil.escape(peer)).append("\"");
                 first = false;
             }
         }
@@ -344,7 +347,7 @@ public class Node {
     private void announcePeerToKnownPeers(String newAddress) {
         String json = "{"
                 + "\"type\":\"PEER_DISCOVERY_RESPONSE\","
-                + "\"address\":\"" + escape(newAddress) + "\""
+                + "\"address\":\"" + JsonUtil.escape(newAddress) + "\""
                 + "}";
 
         Set<String> snapshot;
@@ -383,7 +386,7 @@ public class Node {
             return;
         }
 
-        String json = "{" + "\"nodeId\":\"" + escape(nodeId) + "\"," + "\"peers\":" + peersToJson() + "}";
+        String json = "{" + "\"nodeId\":\"" + JsonUtil.escape(nodeId) + "\"," + "\"peers\":" + peersToJson() + "}";
 
         sendJson(exchange, 200, json);
     }
@@ -404,17 +407,222 @@ public class Node {
         }
 
         String json = "{"
-                + "\"nodeId\":\"" + escape(nodeId) + "\","
-                + "\"nodeAddress\":\"" + escape(nodeAddress) + "\","
+                + "\"nodeId\":\"" + JsonUtil.escape(nodeId) + "\","
+                + "\"nodeAddress\":\"" + JsonUtil.escape(nodeAddress) + "\","
                 + "\"port\":" + port + ","
                 + "\"isBootstrap\":" + isBootstrap + ","
                 + "\"height\":" + blockchain.getHeight() + ","
-                + "\"latestHash\":\"" + escape(blockchain.getLatestHash()) + "\","
-                + "\"walletPublicKey\":\"" + escape(wallet.getPublicKeyBase64()) + "\","
-                + "\"peers\":" + peersToJson()
+                + "\"latestHash\":\"" + JsonUtil.escape(blockchain.getLatestHash()) + "\","
+                + "\"walletPublicKey\":\"" + JsonUtil.escape(wallet.getPublicKeyBase64()) + "\","
+                + "\"peers\":" + peersToJson() + ","
+                + "\"pendingTransactions\":"
+                + blockchain.getPendingTransactionCount()
                 + "}";
 
         sendJson(exchange, 200, json);
+    }
+
+    private void handleWallet(HttpExchange exchange) throws IOException {
+
+        if (!exchange.getRequestMethod().equalsIgnoreCase("GET")) {
+            sendJson(exchange, 405,
+                    "{\"error\":\"Method not allowed\"}");
+            return;
+        }
+
+
+        String json = "{"
+                + "\"nodeId\":\"" + JsonUtil.escape(nodeId) + "\","
+                + "\"publicKey\":\"" + JsonUtil.escape(wallet.getPublicKeyBase64()) + "\""
+                + "}";
+
+
+        sendJson(exchange, 200, json);
+    }
+
+    private void handleWalletSend(HttpExchange exchange) throws IOException {
+
+        if (!exchange.getRequestMethod().equalsIgnoreCase("POST")) {
+            sendJson(exchange, 405,
+                    "{\"error\":\"Method not allowed\"}");
+            return;
+        }
+
+
+        try {
+
+            String body = readRequestBody(exchange);
+
+
+            String receiver =
+                    JsonUtil.extractString(body, "receiver");
+
+
+            int amount =
+                    JsonUtil.extractInt(body, "amount");
+
+
+            if (receiver == null || receiver.isEmpty()) {
+
+                sendJson(exchange, 400,
+                        "{\"error\":\"Missing receiver\"}");
+
+                return;
+            }
+
+
+            if (amount <= 0) {
+
+                sendJson(exchange, 400,
+                        "{\"error\":\"Amount must be positive\"}");
+
+                return;
+            }
+
+
+
+            Transaction tx =
+                    wallet.createTransaction(
+                            receiver,
+                            amount,
+                            blockchain
+                    );
+
+
+            if (tx == null) {
+
+                sendJson(exchange, 400,
+                        "{\"error\":\"Could not create transaction\"}");
+
+                return;
+            }
+
+
+
+            if (!blockchain.addTransaction(tx)) {
+
+                sendJson(exchange, 400,
+                        "{\"error\":\"Transaction rejected\"}");
+
+                return;
+            }
+
+
+
+            seenTransactions.add(tx.getTxId());
+
+
+            broadcastTransaction(tx);
+
+
+            Logger.info(
+                    "Created and broadcast transaction "
+                            + tx.getTxId()
+            );
+
+
+            String response = "{"
+                    + "\"status\":\"Transaction created\","
+                    + "\"txId\":\""
+                    + JsonUtil.escape(tx.getTxId())
+                    + "\""
+                    + "}";
+
+
+            sendJson(exchange, 200, response);
+
+
+
+        } catch (Exception e) {
+
+            Logger.error(
+                    "Failed creating transaction: "
+                            + e.getMessage()
+            );
+
+
+            sendJson(exchange, 400,
+                    "{\"error\":\"Invalid request\"}");
+        }
+    }
+
+    private void handleTransaction(HttpExchange exchange) throws IOException {
+
+        if (!exchange.getRequestMethod().equalsIgnoreCase("POST")) {
+            sendJson(exchange, 405, "{\"error\":\"Method not allowed\"}");
+            return;
+        }
+
+        try {
+
+            String body = readRequestBody(exchange);
+
+            Transaction transaction = Transaction.fromJson(body);
+
+            if (!seenTransactions.add(transaction.getTxId())) {
+                sendJson(exchange, 200, "{\"status\":\"Transaction already processed\"}");
+                return;
+            }
+
+            if (!blockchain.addTransaction(transaction)) {
+                seenTransactions.remove(transaction.getTxId());
+
+                sendJson(exchange, 400,
+                        "{\"error\":\"Transaction validation failed\"}");
+                return;
+            }
+
+            Logger.info("Accepted transaction " + transaction.getTxId());
+
+            broadcastTransaction(transaction);
+
+            sendJson(exchange, 200,
+                    "{\"status\":\"Transaction accepted\"}");
+
+        } catch (Exception e) {
+
+            Logger.error("Failed to process transaction: " + e.getMessage());
+
+            sendJson(exchange, 400,
+                    "{\"error\":\"Invalid transaction\"}");
+        }
+    }
+
+    private void broadcastTransaction(Transaction transaction) {
+
+        String json = transaction.toJson();
+
+        Set<String> snapshot;
+
+        synchronized (peers) {
+            snapshot = new LinkedHashSet<>(peers);
+        }
+
+        for (String peer : snapshot) {
+
+            try {
+
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create(peer + "/transaction"))
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(json))
+                        .build();
+
+                httpClient.sendAsync(
+                        request,
+                        HttpResponse.BodyHandlers.ofString()
+                );
+
+            } catch (Exception e) {
+
+                Logger.warn(
+                        "Failed to broadcast transaction to "
+                                + peer
+                                + ": "
+                                + e.getMessage()
+                );
+            }
+        }
     }
 
     private String peersToJson() {
@@ -425,7 +633,7 @@ public class Node {
             int i = 0;
 
             for (String peer : peers) {
-                sb.append("\"").append(escape(peer)).append("\"");
+                sb.append("\"").append(JsonUtil.escape(peer)).append("\"");
 
                 if (i < peers.size() - 1) {
                     sb.append(",");
@@ -449,14 +657,7 @@ public class Node {
             os.write(responseBytes);
         }
     }
-
-    private String escape(String value) {
-        if (value == null) return "";
-
-        return value
-                .replace("\\", "\\\\")
-                .replace("\"", "\\\"");
-    }
+    
 
     public Blockchain getBlockchain() {
         return blockchain;

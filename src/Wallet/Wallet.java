@@ -79,6 +79,7 @@ public class Wallet {
         }
 
         Transaction tx = new Transaction(
+                "TRANSFER",
                 getPublicKeyBase64(),
                 receiver,
                 amount,

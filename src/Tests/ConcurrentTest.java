@@ -1,3 +1,5 @@
+package Tests;
+
 import Blockchain.Blockchain;
 import Blockchain.GenesisConfig;
 import Transaction.Transaction;
@@ -85,7 +87,8 @@ public class ConcurrentTest {
 
         ExecutorService executor = Executors.newFixedThreadPool(threadCount);
 
-        AtomicInteger submittedTransactions = new AtomicInteger(0);
+        AtomicInteger acceptedTransactions = new AtomicInteger(0);
+        AtomicInteger rejectedTransactions = new AtomicInteger(0);
         AtomicInteger nullTransactions = new AtomicInteger(0);
         AtomicReference<Throwable> failure = new AtomicReference<>(null);
 
@@ -102,11 +105,12 @@ public class ConcurrentTest {
                             bc
                     );
 
-                    if (tx != null) {
-                        bc.addTransaction(tx);
-                        submittedTransactions.incrementAndGet();
-                    } else {
+                    if (tx == null) {
                         nullTransactions.incrementAndGet();
+                    } else if (bc.addTransaction(tx)) {
+                        acceptedTransactions.incrementAndGet();
+                    } else {
+                        rejectedTransactions.incrementAndGet();
                     }
 
                     sleep(100);
@@ -127,11 +131,12 @@ public class ConcurrentTest {
                             bc
                     );
 
-                    if (tx != null) {
-                        bc.addTransaction(tx);
-                        submittedTransactions.incrementAndGet();
-                    } else {
+                    if (tx == null) {
                         nullTransactions.incrementAndGet();
+                    } else if (bc.addTransaction(tx)) {
+                        acceptedTransactions.incrementAndGet();
+                    } else {
+                        rejectedTransactions.incrementAndGet();
                     }
 
                     sleep(120);
@@ -152,11 +157,12 @@ public class ConcurrentTest {
                             bc
                     );
 
-                    if (tx != null) {
-                        bc.addTransaction(tx);
-                        submittedTransactions.incrementAndGet();
-                    } else {
+                    if (tx == null) {
                         nullTransactions.incrementAndGet();
+                    } else if (bc.addTransaction(tx)) {
+                        acceptedTransactions.incrementAndGet();
+                    } else {
+                        rejectedTransactions.incrementAndGet();
                     }
 
                     sleep(140);
@@ -243,9 +249,11 @@ public class ConcurrentTest {
 
         int finalTotal = totalBalance(bc, ivica, anja, marko, luka, faucet);
 
-        Logger.info("Submitted transactions: " + submittedTransactions.get());
+        Logger.info("Accepted transactions: " + acceptedTransactions.get());
+        Logger.info("Rejected transactions: " + rejectedTransactions.get());
         Logger.info("Null transactions: " + nullTransactions.get());
         Logger.info("Final total supply: " + finalTotal);
+        Logger.info("Final pending transaction count: " + bc.getPendingTransactionCount());
 
         if (finalTotal != 1000) {
             Logger.error("TEST FAILED: total supply changed!");

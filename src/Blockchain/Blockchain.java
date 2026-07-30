@@ -7,6 +7,7 @@ import Util.Logger;
 
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
@@ -16,6 +17,7 @@ public class Blockchain {
     private final ArrayList<Block> chain;
     private final int difficulty;
     private final Queue<Transaction> pendingTransactions;
+    private final Set<String> pendingTransactionIds;
     private final UTXOPool utxoPool;
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
@@ -23,7 +25,8 @@ public class Blockchain {
         chain = new ArrayList<>();
         utxoPool = new UTXOPool();
         pendingTransactions = new ConcurrentLinkedQueue<>();
-        this.difficulty = Integer.parseInt(System.getenv().getOrDefault("DIFFICULTY", "4"));
+        pendingTransactionIds = ConcurrentHashMap.newKeySet();
+        difficulty = Integer.parseInt(System.getenv().getOrDefault("DIFFICULTY", "4"));
         chain.add(createGenesisBlock());
 
     }
@@ -37,6 +40,7 @@ public class Blockchain {
         }
 
         Transaction genesisTx = new Transaction(
+                "GENESIS",
                 GenesisConfig.SYSTEM_SENDER,
                 GenesisConfig.FAUCET_PUBLIC_KEY_BASE64,
                 GenesisConfig.GENESIS_AMOUNT,
@@ -102,20 +106,35 @@ public class Blockchain {
         }
     }
 
-    public void minePendingTransactions() {
-        lock.writeLock().lock();
+    public int getPendingTransactionCount() {
+        return pendingTransactionIds.size();
+    }
 
+    public List<String> getPendingTransactionIds() {
+        lock.readLock().lock();
+        try {
+            return new ArrayList<>(pendingTransactionIds);
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    public Block minePendingTransactions() {
+        lock.writeLock().lock();
         try {
             List<Transaction> toProcess = new ArrayList<>();
 
             Transaction tx;
+
+            //transaction si no longer pending, even if it fails during final validation
             while ((tx = pendingTransactions.poll()) != null) {
+                pendingTransactionIds.remove(tx.getTxId());
                 toProcess.add(tx);
             }
 
             if (toProcess.isEmpty()) {
                 Logger.warn("No transactions to mine");
-                return;
+                return null;
             }
 
             List<Transaction> validTransactions = new ArrayList<>();
@@ -124,25 +143,30 @@ public class Blockchain {
                 if (validateAndApplyTransaction(transaction)) {
                     validTransactions.add(transaction);
                 } else {
-                    Logger.warn("Transaction Rejected!");
+                    Logger.warn(
+                            "Transaction rejected during mining: "
+                                    + transaction.getTxId()
+                    );
                 }
             }
 
             if (validTransactions.isEmpty()) {
                 Logger.warn("No valid transactions to mine");
-                return;
+                return null;
             }
 
-            Block prevBlock = getLatestBlock();
+            Block prevBlock = chain.getLast();
 
             Block newBlock = new Block(
-                    chain.size(),
+                    prevBlock.getIndex() + 1,
                     validTransactions,
                     prevBlock.getHash()
             );
 
             newBlock.mineBlock(difficulty);
             chain.add(newBlock);
+
+            return newBlock;
 
         } finally {
             lock.writeLock().unlock();
@@ -183,11 +207,90 @@ public class Blockchain {
         }
     }
 
-    public void addTransaction(Transaction transaction){
-        if (transaction == null){
-            throw new IllegalArgumentException("Transaction cant be null");
+    public boolean addTransaction(Transaction tx) {
+        lock.readLock().lock();
+
+        try {
+            if (tx == null) {
+                Logger.warn("Cannot add null transaction");
+                return false;
+            }
+
+            if (tx.getTxId() == null || tx.getTxId().isEmpty()) {
+                Logger.warn("Cannot add transaction without transaction ID");
+                return false;
+            }
+
+            if (tx.isGenesis()) {
+                Logger.warn("Genesis transactions cannot be added after blockchain creation");
+                return false;
+            }
+
+            if (!pendingTransactionIds.add(tx.getTxId())) {
+                Logger.warn(
+                        "Transaction already exists in pending transactions: "
+                                + tx.getTxId()
+                );
+                return false;
+            }
+
+
+            // validate against a temporary UTXO snapshot.
+
+            if (!validateTransaction(tx)) {
+                pendingTransactionIds.remove(tx.getTxId());
+                Logger.warn("Transaction rejected before entering pending queue");
+                return false;
+            }
+
+            boolean queued = pendingTransactions.offer(tx);
+
+            if (!queued) {
+                pendingTransactionIds.remove(tx.getTxId());
+                Logger.warn("Failed to add transaction to pending queue");
+                return false;
+            }
+
+            Logger.info("Transaction added to pending queue: " + tx.getTxId());
+            return true;
+
+        } finally {
+            lock.readLock().unlock();
         }
-        pendingTransactions.add(transaction);
+    }
+
+    private void removeConfirmedPendingTransactions(Block block) {
+        if (block == null || block.getTransactions().isEmpty()) {
+            return;
+        }
+
+        Set<String> confirmedIds = new HashSet<>();
+
+        for (Transaction tx : block.getTransactions()) {
+            if (tx != null && tx.getTxId() != null) {
+                confirmedIds.add(tx.getTxId());
+            }
+        }
+
+        if (confirmedIds.isEmpty()) {
+            return;
+        }
+
+        int beforeRemoval = pendingTransactionIds.size();
+
+        pendingTransactions.removeIf(
+                pendingTx -> pendingTx != null && confirmedIds.contains(pendingTx.getTxId()));
+
+        pendingTransactionIds.removeAll(confirmedIds);
+
+        int removed = beforeRemoval - pendingTransactionIds.size();
+
+        Logger.info("Removed " + removed + " confirmed transaction(s) from mempool");
+    }
+
+    private boolean validateTransaction(Transaction tx) {
+        UTXOPool temporaryPool = utxoPool.copy();
+        return validateAndApplyTransaction(tx, temporaryPool);
     }
 
     private boolean validateAndApplyTransaction(Transaction tx, UTXOPool workingPool) {
@@ -197,7 +300,25 @@ public class Blockchain {
         }
 
         if (tx.isSystemTransaction()) {
-            Logger.warn("SYSTEM transactions are only allowed in genesis");
+
+            if (tx.isGenesis()) {
+                return false;
+            }
+
+            if (tx.isFaucetTransaction() || tx.isMiningReward()) {
+
+                UTXO output = new UTXO(
+                        tx.getTxId()+"_0",
+                        tx.getReceiverPubKey(),
+                        tx.getAmount(),
+                        tx.getTxId()
+                );
+
+                workingPool.addUTXO(output);
+
+                return true;
+            }
+
             return false;
         }
 
@@ -334,7 +455,9 @@ public class Blockchain {
             utxoPool.replaceWith(temporaryPool);
             chain.add(block);
 
-            Logger.info("Received and accepted external block #" + block.getIndex());
+            removeConfirmedPendingTransactions(block);
+
+            Logger.info("Received and accepted external block number  " + block.getIndex());
 
             return true;
 
