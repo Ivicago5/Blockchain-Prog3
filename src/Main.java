@@ -35,7 +35,7 @@ public class Main {
 
         if (faucetToIvica != null) {
             bc.addTransaction(faucetToIvica);
-            bc.minePendingTransactions();
+            bc.minePendingTransactions(faucet.getPublicKeyBase64());
         }
 
 
@@ -47,7 +47,7 @@ public class Main {
 
         if (tx1 != null){
             bc.addTransaction(tx1);
-            bc.minePendingTransactions();
+            bc.minePendingTransactions(ivica.getPublicKeyBase64());
         }
 
         Logger.info("After tx1: ");
@@ -62,7 +62,7 @@ public class Main {
 
         if (tx2 != null){
             bc.addTransaction(tx2);
-            bc.minePendingTransactions();
+            bc.minePendingTransactions(anja.getPublicKeyBase64());
         }
 
         Logger.info("After tx2: ");

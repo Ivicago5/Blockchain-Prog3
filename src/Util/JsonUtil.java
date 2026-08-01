@@ -87,27 +87,6 @@ public final class JsonUtil {
         return Long.parseLong(json.substring(start, end).trim());
     }
 
-    public static boolean extractBoolean(String json, String field) {
-
-        String search = "\"" + field + "\":";
-
-        int start = json.indexOf(search);
-
-        if (start == -1) {
-            return false;
-        }
-
-        start += search.length();
-
-        int end = json.indexOf(",", start);
-
-        if (end == -1) {
-            end = json.indexOf("}", start);
-        }
-
-        return Boolean.parseBoolean(json.substring(start, end).trim());
-    }
-
     /* ==========================================================
                          JSON ARRAY HELPERS
        ========================================================== */
@@ -240,17 +219,5 @@ public final class JsonUtil {
         return result;
     }
 
-    public static String removeQuotes(String value) {
-
-        if (value == null) {
-            return null;
-        }
-
-        if (value.startsWith("\"") && value.endsWith("\"")) {
-            return value.substring(1, value.length() - 1);
-        }
-
-        return value;
-    }
 
 }

@@ -1,6 +1,7 @@
 package Network;
 
 import Blockchain.Blockchain;
+import Blockchain.Block;
 import Util.JsonUtil;
 import Util.Logger;
 import Wallet.Wallet;
@@ -70,7 +71,9 @@ public class Node {
             server.createContext("/wallet/send", this::handleWalletSend);
             server.createContext("/faucet", this::handleFaucet);
             server.createContext("/transaction", this::handleTransaction);
-            //server.createContext("/block", this::handleBlock);
+            server.createContext("/block", this::handleBlock);
+            server.createContext("/mine", this::handleMine);
+            server.createContext("/chain", this::handleChain);
 
             server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
             server.start();
@@ -103,8 +106,11 @@ public class Node {
         String body = readRequestBody(exchange);
 
 
-        String receiver =
-                JsonUtil.extractString(body,"receiver");
+        String receiver = JsonUtil.extractString(body,"receiver");
+
+        if (receiver != null){
+            receiver = receiver.trim();
+        }
 
 
         if(receiver == null || receiver.isEmpty()) {
@@ -131,7 +137,8 @@ public class Node {
                         GenesisConfig.SYSTEM_SENDER,
                         receiver,
                         100,
-                        new ArrayList<>()
+                        new ArrayList<>(),
+                        ""
                 );
 
 
@@ -406,12 +413,14 @@ public class Node {
             return;
         }
 
+
         String json = "{"
                 + "\"nodeId\":\"" + JsonUtil.escape(nodeId) + "\","
                 + "\"nodeAddress\":\"" + JsonUtil.escape(nodeAddress) + "\","
                 + "\"port\":" + port + ","
                 + "\"isBootstrap\":" + isBootstrap + ","
                 + "\"height\":" + blockchain.getHeight() + ","
+                + "\"balance\":" + wallet.getBalance(blockchain) + ","
                 + "\"latestHash\":\"" + JsonUtil.escape(blockchain.getLatestHash()) + "\","
                 + "\"walletPublicKey\":\"" + JsonUtil.escape(wallet.getPublicKeyBase64()) + "\","
                 + "\"peers\":" + peersToJson() + ","
@@ -430,7 +439,6 @@ public class Node {
             return;
         }
 
-
         String json = "{"
                 + "\"nodeId\":\"" + JsonUtil.escape(nodeId) + "\","
                 + "\"publicKey\":\"" + JsonUtil.escape(wallet.getPublicKeyBase64()) + "\""
@@ -448,19 +456,17 @@ public class Node {
             return;
         }
 
-
         try {
 
             String body = readRequestBody(exchange);
 
 
             String receiver =
-                    JsonUtil.extractString(body, "receiver");
+                    JsonUtil.extractString(body, "receiver").trim();
 
 
             int amount =
                     JsonUtil.extractInt(body, "amount");
-
 
             if (receiver == null || receiver.isEmpty()) {
 
@@ -470,7 +476,6 @@ public class Node {
                 return;
             }
 
-
             if (amount <= 0) {
 
                 sendJson(exchange, 400,
@@ -478,8 +483,6 @@ public class Node {
 
                 return;
             }
-
-
 
             Transaction tx =
                     wallet.createTransaction(
@@ -497,8 +500,6 @@ public class Node {
                 return;
             }
 
-
-
             if (!blockchain.addTransaction(tx)) {
 
                 sendJson(exchange, 400,
@@ -506,8 +507,6 @@ public class Node {
 
                 return;
             }
-
-
 
             seenTransactions.add(tx.getTxId());
 
@@ -588,6 +587,187 @@ public class Node {
         }
     }
 
+    private void handleBlock(HttpExchange exchange) throws IOException {
+
+        if (!exchange.getRequestMethod().equalsIgnoreCase("POST")) {
+            sendJson(exchange, 405, "{\"error\":\"Method not allowed\"}");
+            return;
+        }
+
+        try {
+
+            String body = readRequestBody(exchange);
+
+            Block block = Block.fromJson(body);
+
+            if (seenBlocks.contains(block.getHash())) {
+                sendJson(exchange, 200,
+                        "{\"status\":\"Block already processed\"}");
+                return;
+            }
+
+            if (!blockchain.acceptBlock(block)) {
+
+                Logger.info("Trying chain synchronization...");
+
+                for (String peer : peers) {
+
+                    List<Block> downloaded =
+                            downloadChain(peer);
+
+                    if (blockchain.replaceChain(downloaded)) {
+
+                        seenBlocks.clear();
+
+                        for (Block b : blockchain.getBlocks()) {
+                            seenBlocks.add(b.getHash());
+                        }
+
+                        Logger.info(
+                                "Blockchain synchronized from "
+                                        + peer
+                        );
+
+                        sendJson(exchange,
+                                200,
+                                "{\"status\":\"Chain synchronized\"}");
+
+                        return;
+                    }
+                }
+
+                sendJson(exchange,
+                        400,
+                        "{\"error\":\"Block rejected\"}");
+
+                return;
+            }
+
+            Logger.info("Accepted block #" + block.getIndex());
+
+            seenBlocks.add(block.getHash());
+
+            broadcastBlock(block);
+
+            sendJson(exchange, 200,
+                    "{\"status\":\"Block accepted\"}");
+
+        } catch (Exception e) {
+
+            Logger.error(
+                    "Failed processing block: "
+                            + e.getMessage()
+            );
+
+            sendJson(exchange,
+                    400,
+                    "{\"error\":\"Invalid block\"}");
+        }
+    }
+
+    private void handleMine(HttpExchange exchange) throws IOException {
+
+        if (!exchange.getRequestMethod().equalsIgnoreCase("POST")) {
+            sendJson(exchange, 405,
+                    "{\"error\":\"Method not allowed\"}");
+            return;
+        }
+
+        Block block =
+                blockchain.minePendingTransactions(
+                        wallet.getPublicKeyBase64()
+                );
+
+        if (block == null) {
+
+            sendJson(exchange, 400,
+                    "{\"error\":\"Nothing to mine\"}");
+
+            return;
+        }
+
+        if (!blockchain.acceptBlock(block)) {
+
+            sendJson(exchange, 400,
+                    "{\"error\":\"Failed to accept mined block\"}");
+
+            return;
+        }
+
+        seenBlocks.add(block.getHash());
+
+        broadcastBlock(block);
+
+        Logger.info(
+                "Successfully mined block #" + block.getIndex()
+        );
+
+        sendJson(
+                exchange,
+                200,
+                "{"
+                        + "\"status\":\"Block mined\","
+                        + "\"height\":" + blockchain.getHeight()
+                        + "}"
+        );
+    }
+
+    private void handleChain(HttpExchange exchange) throws IOException {
+
+        if (!exchange.getRequestMethod().equalsIgnoreCase("GET")) {
+            sendJson(exchange,405,"{\"error\":\"Method not allowed\"}");
+            return;
+        }
+
+        sendJson(exchange,200, blockchain.toJson());
+    }
+
+    private List<Block> downloadChain(String peer) {
+
+        List<Block> blocks = new ArrayList<>();
+
+        try {
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(peer + "/chain"))
+                    .GET()
+                    .build();
+
+            HttpResponse<String> response =
+                    httpClient.send(
+                            request,
+                            HttpResponse.BodyHandlers.ofString()
+                    );
+
+            if (response.statusCode() != 200) {
+                Logger.warn("Failed to download chain from " + peer);
+                return blocks;
+            }
+
+            String body = response.body();
+
+            String blocksJson =
+                    JsonUtil.extractArray(body, "blocks");
+
+            for (String blockJson :
+                    JsonUtil.splitJsonArray(blocksJson)) {
+
+                blocks.add(
+                        Block.fromJson(blockJson)
+                );
+            }
+
+        } catch (Exception e) {
+
+            Logger.warn(
+                    "Chain download failed: "
+                            + e.getMessage()
+            );
+        }
+
+        return blocks;
+    }
+
     private void broadcastTransaction(Transaction transaction) {
 
         String json = transaction.toJson();
@@ -617,6 +797,45 @@ public class Node {
 
                 Logger.warn(
                         "Failed to broadcast transaction to "
+                                + peer
+                                + ": "
+                                + e.getMessage()
+                );
+            }
+        }
+    }
+
+    private void broadcastBlock(Block block) {
+
+        String json = block.toJson();
+
+        Set<String> snapshot;
+
+        synchronized (peers) {
+            snapshot = new LinkedHashSet<>(peers);
+        }
+
+        for (String peer : snapshot) {
+
+            try {
+
+                Logger.info("Broadcasting block to: " + peer);
+
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create(peer + "/block"))
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(json))
+                        .build();
+
+                httpClient.sendAsync(
+                        request,
+                        HttpResponse.BodyHandlers.ofString()
+                );
+
+            } catch (Exception e) {
+
+                Logger.warn(
+                        "Failed to broadcast block to "
                                 + peer
                                 + ": "
                                 + e.getMessage()
@@ -661,31 +880,5 @@ public class Node {
 
     public Blockchain getBlockchain() {
         return blockchain;
-    }
-
-    public Wallet getWallet() {
-        return wallet;
-    }
-
-    public List<String> getPeers() {
-        synchronized (peers) {
-            return new ArrayList<>(peers);
-        }
-    }
-
-    public String getNodeAddress() {
-        return nodeAddress;
-    }
-
-    public boolean isBootstrap() {
-        return isBootstrap;
-    }
-
-    public String getNodeId() {
-        return nodeId;
-    }
-
-    public int getPort() {
-        return port;
     }
 }

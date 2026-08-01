@@ -45,7 +45,7 @@ public class ConcurrentTest {
 
         if (faucetToIvica != null) {
             bc.addTransaction(faucetToIvica);
-            bc.minePendingTransactions();
+            bc.minePendingTransactions(ivica.getPublicKeyBase64());
         }
 
         Transaction setupTx1 = ivica.createTransaction(
@@ -56,7 +56,7 @@ public class ConcurrentTest {
 
         if (setupTx1 != null) {
             bc.addTransaction(setupTx1);
-            bc.minePendingTransactions();
+            bc.minePendingTransactions(ivica.getPublicKeyBase64());
         }
 
         Transaction setupTx2 = ivica.createTransaction(
@@ -67,7 +67,7 @@ public class ConcurrentTest {
 
         if (setupTx2 != null) {
             bc.addTransaction(setupTx2);
-            bc.minePendingTransactions();
+            bc.minePendingTransactions(ivica.getPublicKeyBase64());
         }
 
         Logger.info("After setup distribution:");
@@ -177,7 +177,7 @@ public class ConcurrentTest {
 
             try {
                 for (int i = 0; i < 8; i++) {
-                    bc.minePendingTransactions();
+                    bc.minePendingTransactions(ivica.getPublicKeyBase64());
                     sleep(300);
                 }
             } catch (Throwable t) {
@@ -234,7 +234,7 @@ public class ConcurrentTest {
          * Final mining pass.
          * This catches transactions that were submitted near the end.
          */
-        bc.minePendingTransactions();
+        bc.minePendingTransactions(ivica.getPublicKeyBase64());
 
         Throwable error = failure.get();
 

@@ -65,25 +65,23 @@ public class Block {
     public void mineBlock(int difficulty) {
         String target = "0".repeat(difficulty);
 
-        while (!calculateHash().substring(0, difficulty).equals(target)) {
+        while (true) {
+
+            hash = calculateHash();
+
+            if (hash.startsWith(target)) {
+                break;
+            }
+
             nonce++;
         }
 
-        hash = calculateHash();
         Logger.info("Block #" + index + " mined! Nonce: " + nonce + " Hash: " + hash);
 
     }
 
     public List<Transaction> getTransactions() {
         return new ArrayList<>(transactions);
-    }
-
-    public int getNonce() {
-        return nonce;
-    }
-
-    public long getTimestamp() {
-        return timestamp;
     }
 
     public int getIndex() {

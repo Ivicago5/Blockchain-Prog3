@@ -6,6 +6,9 @@ public class GenesisConfig {
 
     public static final String GENESIS_PREVIOUS_HASH = "0";
 
+    public static final int MINING_REWARD = Integer.parseInt(System.getenv().getOrDefault("MINING_REWARD", "10"));
+
+    public static final int BLOCK_DIFFICULTY = Integer.parseInt(System.getenv().getOrDefault("BLOCK_DIFFICULTY", "4"));
     // fixed timestamp so every node creates the same genesis hash.
     public static final long GENESIS_TIMESTAMP = 0L;
 

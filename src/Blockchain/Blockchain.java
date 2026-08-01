@@ -21,15 +21,22 @@ public class Blockchain {
     private final UTXOPool utxoPool;
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
-    public Blockchain() {
+    private Blockchain(boolean skipGenesis) {
+
         chain = new ArrayList<>();
         utxoPool = new UTXOPool();
         pendingTransactions = new ConcurrentLinkedQueue<>();
         pendingTransactionIds = ConcurrentHashMap.newKeySet();
-        difficulty = Integer.parseInt(System.getenv().getOrDefault("DIFFICULTY", "4"));
-        chain.add(createGenesisBlock());
-
+        difficulty = GenesisConfig.BLOCK_DIFFICULTY;
+        if (!skipGenesis) {
+            chain.add(createGenesisBlock());
+        }
     }
+
+    public Blockchain() {
+        this(false);
+    }
+
     // genesis block is the first block in a chain, it has index 0 and previous hash is "0" ofc.
     private Block createGenesisBlock() {
 
@@ -44,7 +51,8 @@ public class Blockchain {
                 GenesisConfig.SYSTEM_SENDER,
                 GenesisConfig.FAUCET_PUBLIC_KEY_BASE64,
                 GenesisConfig.GENESIS_AMOUNT,
-                new ArrayList<>()
+                new ArrayList<>(),
+                "GENESIS_BLOCK"
         );
 
         genesisTxs.add(genesisTx);
@@ -119,7 +127,14 @@ public class Blockchain {
         }
     }
 
-    public Block minePendingTransactions() {
+    private void resetState() {
+        chain.clear();
+        utxoPool.clear();
+        pendingTransactions.clear();
+        pendingTransactionIds.clear();
+    }
+
+    public Block minePendingTransactions(String minerPublicKey) {
         lock.writeLock().lock();
         try {
             List<Transaction> toProcess = new ArrayList<>();
@@ -139,10 +154,16 @@ public class Blockchain {
 
             List<Transaction> validTransactions = new ArrayList<>();
 
+            UTXOPool temporaryPool = utxoPool.copy();
+
             for (Transaction transaction : toProcess) {
-                if (validateAndApplyTransaction(transaction)) {
+
+                if (validateTransaction(transaction, temporaryPool)) {
+
                     validTransactions.add(transaction);
+
                 } else {
+
                     Logger.warn(
                             "Transaction rejected during mining: "
                                     + transaction.getTxId()
@@ -157,6 +178,29 @@ public class Blockchain {
 
             Block prevBlock = chain.getLast();
 
+            String rewardID = "BLOCK_" + (prevBlock.getIndex() + 1);
+
+            Transaction rewardTransaction = new Transaction(
+                    "MINING_REWARD",
+                    GenesisConfig.SYSTEM_SENDER,
+                    minerPublicKey,
+                    GenesisConfig.MINING_REWARD,
+                    new ArrayList<>(),
+                    rewardID
+            );
+
+            validTransactions.add(rewardTransaction);
+
+            Logger.info("Mining reward added for miner.");
+
+            Logger.info(
+                    "Mining block with "
+                            + validTransactions.size()
+                            + " transaction(s)."
+            );
+
+
+
             Block newBlock = new Block(
                     prevBlock.getIndex() + 1,
                     validTransactions,
@@ -164,7 +208,9 @@ public class Blockchain {
             );
 
             newBlock.mineBlock(difficulty);
-            chain.add(newBlock);
+            Logger.info(
+                    "Finished mining block #" + newBlock.getIndex()
+            );
 
             return newBlock;
 
@@ -290,10 +336,10 @@ public class Blockchain {
 
     private boolean validateTransaction(Transaction tx) {
         UTXOPool temporaryPool = utxoPool.copy();
-        return validateAndApplyTransaction(tx, temporaryPool);
+        return validateTransaction(tx, temporaryPool);
     }
 
-    private boolean validateAndApplyTransaction(Transaction tx, UTXOPool workingPool) {
+    private boolean validateTransaction(Transaction tx, UTXOPool workingPool) {
         if (tx == null) {
             Logger.error("Transaction is null");
             return false;
@@ -407,11 +453,68 @@ public class Blockchain {
         return true;
     }
 
-    private boolean validateAndApplyTransaction(Transaction tx) {
-        return validateAndApplyTransaction(tx, utxoPool);
+    private void applyTransaction(Transaction tx) {
+
+        // System transactions (FAUCET / MINING_REWARD)
+        if (tx.isFaucetTransaction() || tx.isMiningReward()) {
+
+            utxoPool.addUTXO(
+                    new UTXO(
+                            tx.getTxId() + "_0",
+                            tx.getReceiverPubKey(),
+                            tx.getAmount(),
+                            tx.getTxId()
+                    )
+            );
+
+            return;
+        }
+
+        int totalInput = 0;
+
+        // Calculate total input BEFORE removing UTXOs
+        for (TransactionInput input : tx.getInputs()) {
+
+            UTXO utxo = utxoPool.getUTXO(input.getUtxoId());
+
+            if (utxo != null) {
+                totalInput += utxo.getAmount();
+            }
+        }
+
+        // Spend inputs
+        for (TransactionInput input : tx.getInputs()) {
+            utxoPool.removeUTXO(input.getUtxoId());
+        }
+
+        // Receiver output
+        utxoPool.addUTXO(
+                new UTXO(
+                        tx.getTxId() + "_0",
+                        tx.getReceiverPubKey(),
+                        tx.getAmount(),
+                        tx.getTxId()
+                )
+        );
+
+        // Change output
+        int change = totalInput - tx.getAmount();
+
+        if (change > 0) {
+
+            utxoPool.addUTXO(
+                    new UTXO(
+                            tx.getTxId() + "_1",
+                            tx.getSenderPubKey(),
+                            change,
+                            tx.getTxId()
+                    )
+            );
+        }
     }
 
-    public boolean receiveBlock(Block block){
+
+    public boolean acceptBlock(Block block){
         lock.writeLock().lock();
         try {
             if (block == null) {
@@ -446,16 +549,21 @@ public class Blockchain {
             UTXOPool temporaryPool = utxoPool.copy();
 
             for (Transaction tx : block.getTransactions()) {
-                if (!validateAndApplyTransaction(tx, temporaryPool)) {
+                if (!validateTransaction(tx, temporaryPool)) {
                     Logger.warn("Received block rejected because transaction validation failed");
                     return false;
                 }
             }
 
-            utxoPool.replaceWith(temporaryPool);
+            for (Transaction tx : block.getTransactions()) {
+                applyTransaction(tx);
+            }
             chain.add(block);
+            Logger.info("Chain height is now " + getHeight());
 
-            removeConfirmedPendingTransactions(block);
+            if (!pendingTransactions.isEmpty()){
+                removeConfirmedPendingTransactions(block);
+            }
 
             Logger.info("Received and accepted external block number  " + block.getIndex());
 
@@ -466,31 +574,93 @@ public class Blockchain {
         }
     }
 
+    public String toJson() {
 
-    //DEBUGGING ONLY
-    /*
-    public void printChain() {
+        StringBuilder json = new StringBuilder();
 
-        Logger.info("=========== Printing whole Blockchain ===========");
-        for (Block block : chain) {
-            Logger.info("Block #" + block.getIndex());
-            Logger.info("Timestamp: " + block.getTimestamp());
-            Logger.info("Previous Hash: " + block.getPreviousHash());
-            Logger.info("Hash: " + block.getHash());
-            Logger.info("Nonce: " + block.getNonce());
+        json.append("{");
 
-            if (block.getTransactions().isEmpty()) {
-                Logger.info("Transactions: []");
-            } else {
-                Logger.info("Transactions:");
-                for (Transaction tx : block.getTransactions()) {
-                    Logger.info("  " + tx.toDebugString());
+        json.append("\"height\":")
+                .append(getHeight())
+                .append(",");
+
+        json.append("\"difficulty\":")
+                .append(difficulty)
+                .append(",");
+
+        json.append("\"blocks\":[");
+
+        for (int i = 0; i < chain.size(); i++) {
+
+            json.append(chain.get(i).toJson());
+
+            if (i < chain.size() - 1) {
+                json.append(",");
+            }
+        }
+
+        json.append("]}");
+
+        return json.toString();
+    }
+
+    public boolean replaceChain(List<Block> newChain) {
+
+        lock.writeLock().lock();
+
+        try {
+
+            if (newChain == null || newChain.isEmpty()) {
+                Logger.warn("Received empty chain");
+                return false;
+            }
+
+            if (newChain.size() <= chain.size()) {
+                Logger.info("Received chain is not longer than local chain");
+                return false;
+            }
+
+            Blockchain candidate = new Blockchain(false);
+
+            candidate.chain.add(newChain.get(0));
+
+            UTXO genesisUTXO = new UTXO(
+                    GenesisConfig.SYSTEM_SENDER + "_0",
+                    GenesisConfig.FAUCET_PUBLIC_KEY_BASE64,
+                    GenesisConfig.GENESIS_AMOUNT,
+                    newChain.getFirst().getTransactions().getFirst().getTxId()
+            );
+
+            candidate.utxoPool.addUTXO(genesisUTXO);
+
+            for (int i = 1; i < newChain.size(); i++) {
+
+                if (!candidate.acceptBlock(newChain.get(i))) {
+
+                    Logger.warn("Replacement chain is invalid");
+
+                    return false;
                 }
             }
-            Logger.info("=====================================");
+
+            resetState();
+
+            chain.addAll(candidate.chain);
+
+            utxoPool.replaceWith(candidate.utxoPool);
+
+            Logger.info(
+                    "Local blockchain replaced with longer valid blockchain. New height: "
+                            + getHeight()
+            );
+
+            return true;
+
+        } finally {
+
+            lock.writeLock().unlock();
         }
     }
-    */
 
     public int getHeight() {
         lock.readLock().lock();
@@ -510,18 +680,16 @@ public class Blockchain {
         }
     }
 
-    public Block getBlock(int index){
-        lock.readLock().lock();
-        try {
-            if (index >= 0 && index < chain.size()){
-                return chain.get(index);
-            }
+    public List<Block> getBlocks() {
 
-            return null;
-        } finally {
+        lock.readLock().lock();
+
+        try {
+            return new ArrayList<>(chain);
+        }
+        finally {
             lock.readLock().unlock();
         }
-
     }
 
 }

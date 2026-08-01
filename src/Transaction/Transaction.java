@@ -3,6 +3,7 @@ package Transaction;
 import Blockchain.GenesisConfig;
 import Util.Crypto;
 import Util.JsonUtil;
+
 import java.security.PrivateKey;
 import java.util.ArrayList;
 import java.util.List;
@@ -14,6 +15,7 @@ public class Transaction {
     private final String senderPublicKey;
     private final String receiverPublicKey;
     private final String type;
+    private String uniqueID;
 
     private final List<TransactionInput> inputs;
     private final List<UTXO> outputs;
@@ -22,7 +24,7 @@ public class Transaction {
     private String signature;
 
 
-    public Transaction(String type, String senderPublicKey, String receiverPublicKey, int amount, List <TransactionInput> inputs) {
+    public Transaction(String type, String senderPublicKey, String receiverPublicKey, int amount, List <TransactionInput> inputs, String uniqueID) {
         this.type = type;
         this.amount = amount;
         this.senderPublicKey = senderPublicKey;
@@ -33,7 +35,9 @@ public class Transaction {
             this.inputs = new ArrayList<>(inputs);
         }
         this.outputs = new ArrayList<>();
-        this.txId = Crypto.SHA256Hash(getRawData());  // id without the signature
+        this.uniqueID = uniqueID == null ? "" : uniqueID;
+        this.txId = Crypto.SHA256Hash(getRawData());
+
     }
 
     private String getRawData() {
@@ -42,7 +46,7 @@ public class Transaction {
         for (TransactionInput input : inputs) {
             inputData.append(input.getUtxoId()).append("|");
         }
-        return type + "|" + senderPublicKey + "|" + receiverPublicKey + "|" + amount + "|" + inputData;
+        return type + "|" + senderPublicKey + "|" + receiverPublicKey + "|" + amount + "|" + uniqueID + "|" + inputData;
     }
 
     public void sign(PrivateKey senderPrivateKey){
@@ -150,6 +154,10 @@ public class Transaction {
                 .append(Util.JsonUtil.escape(type))
                 .append("\",");
 
+        json.append("\"uniqueID\":\"")
+                .append(JsonUtil.escape(uniqueID))
+                .append("\",");
+
         json.append("\"txId\":\"")
                 .append(Util.JsonUtil.escape(txId))
                 .append("\",");
@@ -192,6 +200,8 @@ public class Transaction {
 
         String type = Util.JsonUtil.extractString(json, "type");
 
+        String uniqueID = Util.JsonUtil.extractString(json, "uniqueID");
+
         String txId = Util.JsonUtil.extractString(json, "txId");
 
         int amount = Util.JsonUtil.extractInt(json, "amount");
@@ -201,7 +211,6 @@ public class Transaction {
         String receiver = Util.JsonUtil.extractString(json, "receiverPublicKey");
 
         String signature = Util.JsonUtil.extractString(json, "signature");
-
 
         String inputsJson = Util.JsonUtil.extractArray(json, "inputs");
 
@@ -218,6 +227,7 @@ public class Transaction {
 
         return Transaction.fromNetwork(
                 type,
+                uniqueID,
                 txId,
                 sender,
                 receiver,
@@ -229,6 +239,7 @@ public class Transaction {
 
     public static Transaction fromNetwork(
             String type,
+            String uniqueID,
             String expectedTxId,
             String senderPublicKey,
             String receiverPublicKey,
@@ -261,7 +272,8 @@ public class Transaction {
                 senderPublicKey,
                 receiverPublicKey,
                 amount,
-                inputs
+                inputs,
+                uniqueID
         );
 
         if ((type.equals("FAUCET") || type.equals("MINING_REWARD") || type.equals("GENESIS"))

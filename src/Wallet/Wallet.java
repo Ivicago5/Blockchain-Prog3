@@ -29,14 +29,6 @@ public class Wallet {
         this.privateKey = Crypto.privateKeyFromBase64(privateKeyBase64);
     }
 
-    public PrivateKey getPrivateKey() {
-        return privateKey;
-    }
-
-    public PublicKey getPublicKey() {
-        return publicKey;
-    }
-
     public String getPublicKeyBase64() {
         return Crypto.publicKeyToBase64(publicKey);
     }
@@ -83,7 +75,8 @@ public class Wallet {
                 getPublicKeyBase64(),
                 receiver,
                 amount,
-                inputs
+                inputs,
+                ""
         );
 
         tx.sign(privateKey);
