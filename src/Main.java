@@ -1,97 +1,161 @@
-
+import Blockchain.Block;
 import Blockchain.Blockchain;
-import Transaction.Transaction;
-import Transaction.TransactionInput;
 import Blockchain.GenesisConfig;
+import Transaction.Transaction;
 import Util.Logger;
 import Wallet.Wallet;
 
 public class Main {
-    public static void main(String[] args) {
-        Logger.info("Starting Stuff...");
 
-        String faucetPrivateKey = System.getenv("FAUCET_PRIVATE_KEY_BASE64");
+    private static void printBalances(Blockchain blockchain,
+                                      Wallet faucet,
+                                      Wallet alice,
+                                      Wallet bob,
+                                      Wallet charlie) {
+
+        System.out.println();
+        System.out.println("============== BALANCES ==============");
+        System.out.printf("Faucet  : %d%n", faucet.getBalance(blockchain));
+        System.out.printf("Alice   : %d%n", alice.getBalance(blockchain));
+        System.out.printf("Bob     : %d%n", bob.getBalance(blockchain));
+        System.out.printf("Charlie : %d%n", charlie.getBalance(blockchain));
+        System.out.println("======================================");
+        System.out.println();
+    }
+
+    private static void mine(Blockchain blockchain, String miner) {
+
+        Block block = blockchain.minePendingTransactions(miner);
+
+        if (block == null) {
+            Logger.warn("Nothing to mine.");
+            return;
+        }
+
+        if (!blockchain.acceptBlock(block)) {
+            Logger.error("Failed to accept freshly mined block.");
+        }
+    }
+
+    public static void main(String[] args) {
+
+        Logger.info("Demo");
+
+        String faucetPrivateKey = "MEECAQAwEwYHKoZIzj0CAQYIKoZIzj0DAQcEJzAlAgEBBCC4kYAxvBSf1oazMc0dNL+WwH7zanyInxGJKKT0kD21lg==";
+
 
         Wallet faucet = new Wallet(
                 GenesisConfig.FAUCET_PUBLIC_KEY_BASE64,
                 faucetPrivateKey
         );
 
-        Wallet ivica = new Wallet();
-        Wallet anja = new Wallet();
+        Wallet alice = new Wallet();
+        Wallet bob = new Wallet();
+        Wallet charlie = new Wallet();
 
-        Blockchain bc = new Blockchain();
+        Blockchain blockchain = new Blockchain();
 
-        Logger.info("Initial Balances: ");
-        Logger.info("ivica: " + ivica.getBalance(bc));
-        Logger.info("anja: " + anja.getBalance(bc));
-        Logger.info("faucet: " + faucet.getBalance(bc));
+        Logger.info("Created Faucet, Alice, Bob and Charlie.");
 
-        Transaction faucetToIvica = faucet.createTransaction(
-                ivica.getPublicKeyBase64(),
+        printBalances(blockchain, faucet, alice, bob, charlie);
+
+        //----------------------------------------------------
+        // Faucet -> Alice
+        //----------------------------------------------------
+
+        Logger.info("Faucet sends 100 coins to Alice.");
+
+        Transaction tx1 = faucet.createTransaction(
+                alice.getPublicKeyBase64(),
                 100,
-                bc
+                blockchain
         );
 
-        if (faucetToIvica != null) {
-            bc.addTransaction(faucetToIvica);
-            bc.minePendingTransactions(faucet.getPublicKeyBase64());
+        if (tx1 != null) {
+            blockchain.addTransaction(tx1);
+            mine(blockchain, alice.getPublicKeyBase64());
         }
 
+        printBalances(blockchain, faucet, alice, bob, charlie);
 
-        Transaction tx1 = ivica.createTransaction(
-                anja.getPublicKeyBase64(),
-                10,
-                bc
+        //----------------------------------------------------
+        // Alice -> Bob
+        //----------------------------------------------------
+
+        Logger.info("Alice sends 40 coins to Bob.");
+
+        Transaction tx2 = alice.createTransaction(
+                bob.getPublicKeyBase64(),
+                40,
+                blockchain
         );
 
-        if (tx1 != null){
-            bc.addTransaction(tx1);
-            bc.minePendingTransactions(ivica.getPublicKeyBase64());
+        if (tx2 != null) {
+            blockchain.addTransaction(tx2);
+            mine(blockchain, bob.getPublicKeyBase64());
         }
 
-        Logger.info("After tx1: ");
-        Logger.info("ivica: " + ivica.getBalance(bc));
-        Logger.info("anja: " + anja.getBalance(bc));
+        printBalances(blockchain, faucet, alice, bob, charlie);
 
-        Transaction tx2 = ivica.createTransaction(
-                anja.getPublicKeyBase64(),
+        //----------------------------------------------------
+        // Bob -> Charlie
+        //----------------------------------------------------
+
+        Logger.info("Bob sends 15 coins to Charlie.");
+
+        Transaction tx3 = bob.createTransaction(
+                charlie.getPublicKeyBase64(),
                 15,
-                bc
+                blockchain
         );
 
-        if (tx2 != null){
-            bc.addTransaction(tx2);
-            bc.minePendingTransactions(anja.getPublicKeyBase64());
+        if (tx3 != null) {
+            blockchain.addTransaction(tx3);
+            mine(blockchain, charlie.getPublicKeyBase64());
         }
 
-        Logger.info("After tx2: ");
-        Logger.info("ivica: " + ivica.getBalance(bc));
-        Logger.info("anja: " + anja.getBalance(bc));
-        Logger.info("Faucet " + faucet.getBalance(bc));
+        printBalances(blockchain, faucet, alice, bob, charlie);
 
-        // debug print
-        //bc.printChain();
+        //----------------------------------------------------
+        // Charlie -> Alice
+        //----------------------------------------------------
 
-        String json = tx1.toJson();
+        Logger.info("Charlie sends 5 coins back to Alice.");
 
-        System.out.println(json);
-
-
-        Transaction copy = Transaction.fromJson(json);
-
-
-        System.out.println(copy.toDebugString());
-
-        System.out.println(
-                copy.isSignatureValid()
+        Transaction tx4 = charlie.createTransaction(
+                alice.getPublicKeyBase64(),
+                5,
+                blockchain
         );
 
-        System.out.println(
-                tx1.getTxId().equals(copy.getTxId())
+        if (tx4 != null) {
+            blockchain.addTransaction(tx4);
+            mine(blockchain, alice.getPublicKeyBase64());
+        }
+
+        printBalances(blockchain, faucet, alice, bob, charlie);
+
+        //----------------------------------------------------
+        // Invalid transaction
+        //----------------------------------------------------
+
+        Logger.info("Alice tries to send 10000 coins.");
+
+        Transaction invalid = alice.createTransaction(
+                bob.getPublicKeyBase64(),
+                10000,
+                blockchain
         );
 
-        Logger.warn("Checking if blockchain is valid.   Answer " + bc.isValid());
+        if (invalid == null) {
+            Logger.info("Overspending correctly rejected.");
+        }
+
+        //----------------------------------------------------
+
+        Logger.info("Blockchain height: " + blockchain.getHeight());
+
+        Logger.info("Blockchain valid: " + blockchain.isValid());
 
     }
 }

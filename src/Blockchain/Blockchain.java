@@ -620,18 +620,20 @@ public class Blockchain {
                 return false;
             }
 
-            Blockchain candidate = new Blockchain(false);
+            Blockchain candidate = new Blockchain(true);
 
-            candidate.chain.add(newChain.get(0));
+            candidate.chain.add(newChain.getFirst());
 
-            UTXO genesisUTXO = new UTXO(
-                    GenesisConfig.SYSTEM_SENDER + "_0",
-                    GenesisConfig.FAUCET_PUBLIC_KEY_BASE64,
-                    GenesisConfig.GENESIS_AMOUNT,
-                    newChain.getFirst().getTransactions().getFirst().getTxId()
+            Transaction genesisTx = newChain.getFirst().getTransactions().getFirst();
+
+            candidate.utxoPool.addUTXO(
+                    new UTXO(
+                            genesisTx.getTxId() + "_0",
+                            GenesisConfig.FAUCET_PUBLIC_KEY_BASE64,
+                            GenesisConfig.GENESIS_AMOUNT,
+                            genesisTx.getTxId()
+                    )
             );
-
-            candidate.utxoPool.addUTXO(genesisUTXO);
 
             for (int i = 1; i < newChain.size(); i++) {
 
